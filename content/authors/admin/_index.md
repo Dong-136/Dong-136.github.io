@@ -25,14 +25,14 @@ bio: 从事云原生相关工作
 #- Computational Linguistics
 #- Information Retrieval
 
-education:
- courses:
- - course: 硕士
-   institution: 东南大学
-   year: 2024
- - course: 学士
-   institution: 大连海事大学
-   year: 2021
+# education:
+#  courses:
+#  - course: 硕士
+#    institution: 东南大学
+#    year: 2024
+#  - course: 学士
+#    institution: 大连海事大学
+#    year: 2021
 #  - course: BSc in Artificial Intelligence
 #    institution: Massachusetts Institute of Technology
 #    year: 2008
@@ -44,7 +44,7 @@ education:
 social:
   - icon: envelope
     icon_pack: fas
-    link: 'about/#contact' # For a direct email link, use "mailto:test@example.org".
+    link: 'zdya2023@163.com' # For a direct email link, use "mailto:test@example.org".
   - icon: twitter
     icon_pack: fab
     link: https://twitter.com/wowchemy
@@ -65,6 +65,3 @@ social:
 # Enter email to display Gravatar (if Gravatar enabled in Config)
 email: "zdya2023@163.com"
 ---
-
-
-朱冬亚的简介

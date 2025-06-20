@@ -1,17 +1,11 @@
-author = "Donix"
-title = "k8s源码阅读（1）-ShareInformerFactory"
-date = "2025-06-15"
-description = ""
-tags = [
-        "k8s源码阅读",
-]
-categories = [
-    "Kubernetes",
-]
-series = ["k8s源码阅读"]
-aliases = ["kubernetes code"]
-
-+++
+---
+title: k8s源码分析（1）- ShareInformerFactory
+summary: 
+tags:
+  - kubernetes
+date: 2025-06-01
+# external_link: http://github.com
+---
 
 最近准备对k8s源码进行梳理，希望能够更加深入地理解k8s的架构。接下来将整理一系列的博客，作为自己的笔记，也希望能帮助到他人。
 <!--more-->

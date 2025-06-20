@@ -1,3 +1,5 @@
+googleAnalytics = "G-LJDFCFE4M3"
+
 [build]
   command = "hugo --gc --minify -b $URL"
   publish = "public"
@@ -8,12 +10,17 @@
 
 [context.production.environment]
   HUGO_ENV = "production"
+  googleAnalytics = "G-LJDFCFE4M3"
 
 [context.deploy-preview]
   command = "hugo --gc --minify --buildFuture -b $DEPLOY_PRIME_URL"
 
 [context.branch-deploy]
   command = "hugo --gc --minify -b $DEPLOY_PRIME_URL"
+
+[services]
+  [services.googleAnalytics]
+    ID = "G-LJDFCFE4M3"  # 您的 GA4 测量ID
 
 [[plugins]]
   package = "netlify-plugin-hugo-cache-resources"

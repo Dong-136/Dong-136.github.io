@@ -28,12 +28,15 @@ content:
   filter_button:
     - name: All
       tag: '*'
-    - name: Machine Learning
-      tag: ML
-    - name: Computer Vision
-      tag: CV
-    - name: NLP
-      tag: NLP
+    - name: 算法
+      tag: 算法
+    - name: kubernetes
+      tag: kubernetes
+    - name: 博客
+      tag: blog
+    - name: 旅行
+      tag: travel
+    
 
 design:
   columns: '1'
