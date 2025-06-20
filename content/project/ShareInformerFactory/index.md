@@ -4,9 +4,11 @@ summary: 使用 sharedInformerFactory 可以统一管理控制器中需要的各
 tags:
   - kubernetes
 date: 2025-06-01
+toc: 
+  - enable
 # external_link: http://github.com
 ---
-
+<!-- {{< toc mobile_only=false is_open=true >}} -->
 # ShareInformerFactory
 
 ## SharedInformerFactory的结构

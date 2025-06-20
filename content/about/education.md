@@ -25,7 +25,7 @@ experience:
   - title: 软件工程
     company: 东南大学
     company_url: ''
-    company_logo: org-x
+    company_logo: 'images/school/seu'
     location: 江苏·南京
     date_start: '2021-09-01'
     date_end: '2024-07-01'
@@ -35,7 +35,7 @@ experience:
   - title: 软件工程
     company: 大连海事大学
     company_url: ''
-    company_logo: org-x
+    company_logo: 'images/school/dlmu'
     location: 辽宁·大连
     date_start: '2017-09-01'
     date_end: '2021-07-01'

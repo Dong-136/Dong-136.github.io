@@ -12,6 +12,11 @@ appearance:
   font_size: S
 
 # SEO
+toc:
+  enable: true    # 全局TOC开关
+  sidebar: true   # 侧边栏显示开关
+  startLevel: 2   # 从H2标题开始
+  endLevel: 4     # 到H4标题结束
 
 marketing:
   seo:
@@ -21,7 +26,7 @@ marketing:
     description: 'A highly-customizable Hugo blog theme powered by Wowchemy website builder.'
     twitter: 'GetResearchDev'
   analytics:
-    google_analytics: ''
+    google_analytics: 'G-LJDFCFE4M3'
     baidu_tongji: ''
     google_tag_manager: ''
     microsoft_clarity: ''
