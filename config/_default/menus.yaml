@@ -10,3 +10,6 @@ main:
   - name: Resumé
     url: about/
     weight: 20
+  - name: 博客
+    url: post/
+    weight: 30

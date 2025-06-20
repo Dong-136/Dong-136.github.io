@@ -1,12 +1,12 @@
 ---
 # Use the Intro widget of the Blog template
-widget: about.avatar
+widget: post.avatar
 
 # This file represents a page section.
 headless: true
 
 # Order that this section will appear in.
-weight: 10
+weight: 30
 
 author: admin
 #design:
@@ -17,6 +17,3 @@ author: admin
 #      path:  # enter filename of a video in /assets/media
 #  css_class: fullscreen
 ---
-
-👋 Hi, 你好! 我是 **朱冬亚**, 一位云原生探索者！
-{style="font-size: 1.2rem; background: #FFB76B; background: linear-gradient(to right, #FFB76B 0%, #FFA73D 30%, #FF7C00 60%, #FF7F04 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;"}

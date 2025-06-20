@@ -19,6 +19,7 @@ cascade:
     commentable: true
     show_related: true
     show_breadcrumb: true
+    toc: true
 
 ############################
 ## LANGUAGE

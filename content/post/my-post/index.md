@@ -4,11 +4,9 @@ summary:
 tags:
   - kubernetes
 date: 2025-06-01
+toc: true
 # external_link: http://github.com
 ---
-
-最近准备对k8s源码进行梳理，希望能够更加深入地理解k8s的架构。接下来将整理一系列的博客，作为自己的笔记，也希望能帮助到他人。
-<!--more-->
 
 # ShareInformerFactory
 

@@ -18,7 +18,7 @@ status:
 #  url: ""
 
 # Short bio (displayed in user profile at end of posts)
-bio: 从事云原生相关工作
+# bio: 从事云原生相关工作
 
 #interests:
 #- Artificial Intelligence

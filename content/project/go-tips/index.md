@@ -4,6 +4,7 @@ summary: go语言使用时需要注意的事项
 tags:
   - kubernetes
 date: 2025-06-01
+toc: true
 # external_link: http://github.com
 ---
 
