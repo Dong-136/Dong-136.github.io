@@ -29,7 +29,7 @@ content:
     - name: All
       tag: '*'
     - name: 算法
-      tag: 算法
+      tag: algorithm
     - name: kubernetes
       tag: kubernetes
     - name: 博客
