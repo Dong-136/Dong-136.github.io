@@ -5,6 +5,7 @@
 
 title: Donix's 个人博客 # Website name
 baseURL: 'https://donix.top/' # Website URL
+googleAnalytics: "G-LJDFCFE4M3"
 
 ############################
 ## PAGE OPTIONS

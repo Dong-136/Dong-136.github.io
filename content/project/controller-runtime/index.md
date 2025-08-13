@@ -1,0 +1,452 @@
+---
+title: k8s源码分析- controller-runtime
+summary: 
+tags:
+  - kubernetes
+date: 2025-06-01
+toc: true
+# external_link: http://github.com
+---
+<!-- {{< toc mobile_only=false is_open=true >}} -->
+# Controller-runtime
+
+## controller-runtime代码结构
+
+```go
+/sigs.k8s.io/controller-runtime/pkg
+    /manager
+        /manager.go     // 定义了 Manager interface
+        /internal.go    // 定义了Manager 实现类 controllerManager ，因为可能有多个controller
+    /controller
+        /controller.go  // 定义了 Controller interface
+    /reconcile
+        /reconcile.go   // 定义了 Reconciler interface
+    /handler            // 事件处理器/入队器，负责将informer 的cud event 转换为reconcile.Request加入到queue中
+```
+
+controller-runtime 的核心是Manager 驱动 Controller 进而驱动 Reconciler。kubebuiler 用Manager.start 作为驱动入口， Reconciler 作为自定义入口（变的部分），Controller 是不变的部分。
+
+## 与client-go informer用法对比
+
+### client-go用法
+
+使用 client-go informer 机制 监听 某个object的写法。
+
+```go
+kubeClient = kubernetes.NewForConfigOrDie(opt.Config)
+// 基于GVK 操作资源，假设需要操作数十种不同资源时，我们需要为每一种资源实现各自的函数
+podInformer = informers.NewSharedInformerFactory(pod.kubeClient, 0).Core().V1().Pods()
+podLister = pod.podInformer.Lister()
+podSynced = pod.podInformer.Informer().HasSynced
+podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	AddFunc:    AddPod,
+	DeleteFunc: DeletePod,
+	UpdateFunc: UpdatePod,
+})
+
+// 启动informer
+podInformer.Informer().Run(stopCh)
+cache.WaitForCacheSync(stopCh, podSynced)
+// 此处没有使用workqueue，但一般都是会用workqueue 增强处理逻辑的
+```
+
+单纯基于 client-go informer 可以监听 object 变化并做出处理，但仍然有很多问题，还需进一步的封装，于是引出了controller-runtime。
+
+1. 多个object 的informer 与 多个worklaod 的reconcile 可能具有多对多关系
+   1. 一个workload 可能需要针对多个 object 的event 进行reconcile
+   2. 多个workload，每一个workload 都持有 podInformer 会有重复的问题（同一个sharedInformerFactory内部的Informer不会重复创建），为解决这个问题，需要一个独立的对象（比如叫cache）持有所有用到的informer（一个object 一个informer），**向informer 注册eventhandler 也应改为向 cache 注册eventhandler**。
+2. reconcile 时失败、延迟重试等功能
+
+### controller-runtime用法
+
+每段旅程需要一个起点，每个程序需要一个入口函数，一个operator 程序本质是如下的样子
+
+```go
+func main(){
+	// 初始化 Manager，同时生成一个默认配置的 Cache
+ 	mgr, err = ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{ 
+        Scheme:             scheme,
+        Namespace:          namespace,
+    })
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+        setupLog.Error(err, "problem running manager")
+        os.Exit(1)
+    }
+}
+```
+
+接下来就是用 Reconciler 实现业务逻辑，并将其挂在 manager 上。Reconciler 接受一个对象的名称，并返回我们是否需要再次尝试。（不同版本的reconcile接口可能不一样，但主要逻辑是不变的）
+
+```go
+type ApplicationReconciler struct {
+	client.Client
+	Scheme *runtime.Scheme
+    Log    logr.Logger
+}
+func (r *ApplicationReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+	// get application
+	application := &xx.Application{}
+	if err := r.client.Get(ctx, req.NamespacedName, application); err != nil {...}
+
+    // your logic here
+
+    return ctrl.Result{}, nil
+}
+// 将 Reconcile 添加到 manager 中，这样当 manager 启动时它就会被启动。
+func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+    return ctrl.NewControllerManagedBy(mgr).
+        For(&xx.Application{}).
+        Complete(r)
+}
+```
+
+ApplicationReconciler 持有Client，便有能力对相关资源进行 crud
+
+1. 从request 中获取资源name ，进而通过client 获取资源obj
+2. 处理完毕后，通过Result 告知是Requeue 下次重新处理，还是处理成功开始下一个
+
+如果我们要给 Reconciler 传一些参数的话 可以改造下 SetupWithManager
+
+```go
+func SetupWithManager(mgr ctrl.Manager, cfg *Config, 其它参数) error {
+	r := &applicationReconciler{
+		client:        mgr.GetClient(),
+		cfg:           cfg,
+		log:           ctrl.LoggerFrom(context.Background()).WithName(name),
+		recorder:      mgr.GetEventRecorderFor(name),
+	}
+	return ctrl.NewControllerManagedBy(mgr).
+        For(&xx.Application{}).
+        Complete(r)
+}
+```
+
+将 crd 的scheme 注入到 manager 的scheme，将 Reconcile 添加到 manager 中
+
+```go
+func main() {
+  	scheme := runtime.NewScheme()
+  	_ = corev1.AddToScheme(scheme)
+	// 1. init Manager
+  	mgr, _ := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+    	Scheme: scheme,
+    	Port:   9443,
+  	})
+  	// 2. init Reconciler
+  	application.SetupWithManager(mgr)
+  	// 3. start Manager
+  	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+  	}
+}
+```
+
+## Controller-runtime整体设计
+
+![img](https://qiankunli.github.io/public/upload/kubernetes/controller_runtime_overview.jpg)
+
+Manager 管理多个Controller 的运行，并提供 数据读（cache）写（client）等crudw基础能力，或者说 Manager 负责初始化cache、clients 等公共依赖，并提供给runnbale 使用。
+
+![img](https://qiankunli.github.io/public/upload/kubernetes/controller_runtime.png)
+
+1. Cache, 负责在 Controller 进程里面根据 Scheme 同步 Api Server 中所有该 Controller 关心 的资源对象，其核心是 相关Resource的 Informer,Informer 会负责监听对应 Resource的创建/删除/更新操作，以触发 Controller 的 Reconcile 逻辑。
+2. Clients, Reconciler不可避免地需要对某些资源类型进行crud，就是通过该 Clients 实现的，其中查询功能实际查询是本地的 Cache，写操作直接访问 Api Server。
+
+![img](https://qiankunli.github.io/public/upload/kubernetes/controller_runtime_logic.png)
+
+Cache 顾名思义就是缓存，用于建立 Informer 对 ApiServer 进行连接 watch 资源，并将 watch 到的 object 推入队列；Controller 一方面会向 Informer 注册 eventHandler，另一方面会从队列中拿数据并执行用户侧 Reconciler 的函数。A Controller manages a work queue fed reconcile.Requests from source.Sources. Work is performed through the reconcile.Reconciler for each enqueued item. Work typically is reads and writes Kubernetes objects to make the system state match the state specified in the object Spec.
+
+当我们观察Manager/Contronller/Reconciler Interface 的时候，接口定义是非常清晰的，但是为了实现接口定义的 能力（方法）要聚合很多struct，初始化时要为它们赋值，这个部分代码实现的比较复杂，可能是go 缺少类似ioc 工具带来的问题。
+
+### 启动流程
+
+kubebuilder 生成的 controller-runtime 代码相对晦涩一些，很多时候crd 已经在其它项目中定义完成，我们需要监听一个或多个crd 完成一些工作，这种场景下对crd 的处理逻辑可以参考 kubeflow/tf-operator 等项目。
+
+启动逻辑比较简单：创建数据结构，并建立数据结构之间的关系。
+
+1. 初始化Manager；初始化流程主要是创建cache 与 Clients。
+   1. 创建 Cache，可以看到 Cache 主要就是创建了 InformersMap，Scheme 里面的每个 GVK 都创建了对应的 Informer，通过 informersByGVK 这个 map 做 GVK 到 Informer 的映射，每个 Informer 会根据 ListWatch 函数对对应的 GVK 进行 List 和 Watch。PS： 肯定不能一个Controller 一个informer，但controller 之间会共用informer，所以informer 要找一个地方集中持有。
+   2. 创建 Clients，读操作使用上面创建的 Cache，写操作使用 K8s go-client 直连。
+2. 将 Manager 的 Client 传给 Controller，并且调用 SetupWithManager 方法传入 Manager 进行 Controller 的初始化；
+3. 启动 Manager。即 `Manager.Start(stopCh)`
+
+因为Controller 的逻辑相对固定， 所以main 入口只有Reconciler 和Manager，Controller 被隐藏了。
+
+```go
+func main() {
+	...
+	// manager -> controller -> reconciler 的对象层级结构
+	// 主体分为两部分，一是配置manager，二是启动manager
+    // 1. init Manager 
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:             scheme,		// 要将你监听的crd 加入到scheme 中
+		Port:               9443,})
+    // 2. init Reconciler（Controller）
+	c := &controllers.ApplicationReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+	if err = c.SetupWithManager(mgr); err != nil {...}
+    // 3. start Manager
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {...}
+}
+```
+
+ApplicationReconciler 是我们定义的Application object 对应的Reconciler 实现。ApplicationReconciler.SetupWithManager 有点绕
+
+1. 创建Reconciler，将Reconciler 加入到controller
+2. 创建controller，将controller 加入到manager
+3. 创建时 会执行`Controller.watch` 配置controller 监听哪些gvk 或者说将哪些gvk 加入到cache
+
+```go
+// kubebuilder 生成
+func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	c, err := controller.New(r.ControllerName(), mgr, controller.Options{
+		Reconciler: r,
+	})
+	// 为Controller指定cr
+	c.Watch(&source.Kind{Type: &appsv1alpha1.Application{}}, &handler.EnqueueRequestForObject{},
+		predicate.Funcs{CreateFunc: r.onOwnerCreateFunc()},
+	)
+	return nil
+}
+func New(name string, mgr manager.Manager, options Options) (Controller, error) {
+	...
+	// Inject dependencies into Reconciler
+	if err := mgr.SetFields(options.Reconciler); err != nil {...}
+	c := &controller.Controller{    // Create controller with dependencies set
+		Do:       options.Reconciler,
+		Cache:    mgr.GetCache(),
+		Config:   mgr.GetConfig(),
+		Scheme:   mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+        Name:     name,
+	}
+	return c, mgr.Add(c)    // Add the controller as a Manager components
+}
+```
+
+### Manager启动
+
+[controller-runtime 之 manager 实现](https://mp.weixin.qq.com/s/3i3t-PBP3UN8W9quEhAQDQ) Manager interface 充分体现了它的作用：添加Controller 并Start 它们。
+
+![img](https://qiankunli.github.io/public/upload/kubernetes/manager_controller.png)
+
+manager中可以设置多个controller，但是一个controller中只有一个Reconciler。
+
+```go
+// Manager 初始化共享的依赖关系，比如 Caches 和 Client，并将他们提供给 Runnables
+type Manager interface {
+ 	// Add 将在组件上设置所需的依赖关系，并在调用 Start 时启动组件
+  	// Add 将注入接口的依赖关系 - 比如 注入 inject.Client
+  	// 根据 Runnable 是否实现了 LeaderElectionRunnable 接口判断Runnable 可以在非 LeaderElection 模式（始终运行）或 LeaderElection 模式（如果启用了 LeaderElection，则由 LeaderElection 管理）下运行
+  	Add(Runnable) error
+ 	// SetFields 设置对象上的所有依赖关系，而该对象已经实现了 inject 接口
+  	// 比如 inject.Client
+ 	SetFields(interface{}) error
+ 	// Start 启动所有已注册的控制器，并一直运行，直到停止通道关闭
+  	// 如果使用了 LeaderElection，则必须在此返回后立即退出二进制，否则需要 Leader 选举的组件可能会在 Leader 锁丢失后继续运行
+ 	Start(<-chan struct{}) error
+ 	...
+}
+```
+
+Manager 可以管理 Runnable的生命周期（添加/启动），**Controller 只是 Runnable 的一个特例**。
+
+1. 持有Runnable共同的依赖：client、cache、scheme 等。
+2. 提供了object getter(例如GetClient())，还有一个简单的依赖注入机制(runtime/inject)，
+3. 支持领导人选举，提供了一个用于优雅关闭的信号处理程序。PS：所以哪怕 不是处理crd，普通的一个 服务端程序如果需要选主，也可以使用Manager
+
+```go
+func (cm *controllerManager) Start(stop <-chan struct{}) error {
+    // 启动metric 组件供Prometheus 拉取数据
+    go cm.serveMetrics(cm.internalStop)
+    // 启动健康检查探针
+	go cm.serveHealthProbes(cm.internalStop)
+	go cm.startNonLeaderElectionRunnables()
+	if cm.resourceLock != nil {
+		if err := cm.startLeaderElection(); err != nil{...}
+	} else {
+		go cm.startLeaderElectionRunnables()
+	}
+    ...
+}
+type controllerManager struct {
+    ...
+	// leaderElectionRunnables is the set of Controllers that the controllerManager injects deps into and Starts.
+	// These Runnables are managed by lead election.
+	leaderElectionRunnables []Runnable
+}
+// 启动cache/informer 及 Controller
+func (cm *controllerManager) startLeaderElectionRunnables() {
+    // 核心是启动Informer, waitForCache ==> cm.startCache = cm.cache.Start ==> InformersMap.Start ==> 
+    // InformersMap.structured/unstructured.Start ==> Informer.Run
+	cm.waitForCache()
+	for _, c := range cm.leaderElectionRunnables {
+		ctrl := c
+		go func() {
+            // 启动Controller
+			if err := ctrl.Start(cm.internalStop); err != nil {...}
+		}()
+	}
+}
+```
+
+### Controller
+
+Controller 管理一个工作队列，并从 source.Sources 中获取 reconcile.Requests 加入队列， 通过执行 reconcile.Reconciler 来处理队列中的每项 reconcile.Requests。Controller 逻辑主要有两个，对应两个函数是 Watch 与 Start
+
+1. 监听 object 事件并加入到 queue 中。
+   1. Controller 会先向 Informer 注册特定资源的 eventHandler；然后 Cache 会启动 Informer，Informer 向 ApiServer 发出请求，建立连接；当 Informer 检测到有资源变动后，使用 Controller 注册进来的 eventHandler 判断是否推入队列中；
+   2. 为提高扩展性 Controller 将这个职责独立出来交给了 Source 组件，不只是监听apiserver，任何外界资源变动 都可以通过 Source 接口加入 到Reconcile 逻辑中。
+2. 从queue 中取出object event 执行Reconcile 逻辑。 PS：**一个controller 持有了一个queue，一手包办了queue的生产和消费**。
+
+![img](https://qiankunli.github.io/public/upload/kubernetes/controller_runtime_controller.png)
+
+```go
+type Controller interface {
+	// Reconciler is called to reconcile an object by Namespace/Name
+	reconcile.Reconciler
+	// Watch takes events provided by a Source and uses the EventHandler to enqueue reconcile.Requests in response to the events.
+	Watch(src source.Source, eventhandler handler.EventHandler, predicates ...predicate.Predicate) error
+	// Start starts the controller.  Start blocks until the context is closed or a controller has an error starting.
+	Start(ctx context.Context) error
+	...
+}
+// sigs.k8s.io/controller-runtime/pkg/controller/controller.go
+type Controller struct {
+	Name string // Name is used to uniquely identify a Controller in tracing, logging and monitoring. Name is required.
+	Do reconcile.Reconciler
+	Client client.Client // Client is a lazily initialized Client.  
+	Scheme *runtime.Scheme
+	Cache cache.Cache
+	Config *rest.Config // Config is the rest.Config used to talk to the apiserver.  
+	// Queue is an listeningQueue that listens for events from Informers and adds object keys to the Queue for processing
+	Queue workqueue.RateLimitingInterface
+    ...
+}
+func New(name string, mgr manager.Manager, options Options) (Controller, error) {
+	c, err := NewUnmanaged(name, mgr, options)
+	// Add the controller as a Manager components
+	return c, mgr.Add(c)
+}
+```
+
+一个controller主要包含Watch和Start两个方法，以及一个调协方法Reconcile。在controller的定义中，看上去没有资源对象的Informer或者Indexer数据，而在K8s中所有与kube-apiserver资源的交互是通过Informer实现的，实际上这里是通过下面的 startWatches 属性做了一层封装。
+
+```go
+type Controller struct {
+	// startWatches maintains a list of sources, handlers, and predicates to start when the controller is started.
+   	startWatches []watchDescription
+}
+```
+
+watch event 并将其放入队列
+
+Watch方法首先会判断当前的controller是否已启动，如果未启动，会将watch的内容暂存到startWatches中等待controller启动。如果已启动，则会直接调用`src.Start(c.ctx, evthdler, c.Queue, prct...)`, 其中Source可以为informer、kind、channel等。src.Start方法作用是获取对应的informer，为informer注册了一个internal.EventHandler。internal.EventHandler实现了OnAdd、OnUpdate、OnDelete等方法，以OnAdd方法为例，该方法最后会调用EventHandler.Create 方法。EventHandler为一个接口，有EnqueueRequestForObject、Funcs、EnqueueRequestForOwner、enqueueRequestsFromMapFunc四个实现类。Reconcile协调执行的数据对象，实际是通过Informer中的EventHandler入队的。
+
+![img](https://qiankunli.github.io/public/upload/kubernetes/controller_watch.png)
+
+以 tf-job的 TFJobReconciler 为例
+
+```go
+// 这里明确了 Controller 监听哪些Type， 或者说哪些 event 会触发Controller
+func (r *TFJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	c, err := controller.New(r.ControllerName(), mgr, controller.Options{Reconciler: r,})
+	// using onOwnerCreateFunc is easier to set defaults
+	c.Watch(&source.Kind{Type: &tfv1.TFJob{}}, &handler.EnqueueRequestForObject{},predicate.Funcs{...}) 
+	// inject watching for job related pod
+	c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{...}, predicate.Funcs{...)
+	// inject watching for job related service
+	...
+	return nil
+}
+// watch 就是启动 source.start
+func (c *Controller) Watch(src source.Source, evthdler handler.EventHandler, prct ...predicate.Predicate) error {
+	// Inject Cache into arguments
+	c.SetFields(src)
+	c.SetFields(evthdler)
+	for _, pr := range prct {
+		c.SetFields(pr)
+	}
+	c.Log.Info("Starting EventSource", "source", src)
+	return src.Start(c.ctx, evthdler, c.Queue, prct...)
+}
+```
+
+Source 抽象了事件源，event 由 具体实现提供，将其加入到 workqueue。
+
+1. Kind 来处理来自集群的事件（如 Pod 创建、Pod 更新、Deployment 更新）；
+2. Channel 来处理来自集群外部的事件（如 GitHub Webhook 回调、轮询外部 URL）。
+
+```go
+// pkg/source/source.go
+type Source interface {  
+   // Start() 是 Controller-runtime 的内部⽅法，应该仅由 Controller 调⽤
+   Start(context.Context, handler.EventHandler, workqueue.RateLimitingInterface, ...predicate.Predicate) error  
+}
+// Kind 用于提供来自集群内部的事件源，这些事件来自于 Watches（例如 Pod Create 事件）
+type Kind struct {
+ 	// Type 是 watch 对象的类型，比如 &v1.Pod{}
+ 	Type runtime.Object
+ 	// cache 用于 watch 的 APIs 接口
+ 	cache cache.Cache
+}
+func (ks *Kind) Start(handler handler.EventHandler, queue workqueue.RateLimitingInterface,prct ...predicate.Predicate) error {
+ 	// 从 Cache 中获取 Informer 并添加一个事件处理程序来添加队列
+ 	i, err := ks.cache.GetInformer(context.TODO(), ks.Type)
+i.AddEventHandler(internal.EventHandler{Queue: queue, EventHandler: handler, Predicates: prct})
+ 	return nil
+}
+```
+
+watch 在 controller 初始化时调用，明确了 Controller 监听哪些Type，订阅这些Type的变化（入队逻辑挂到informer 上）。Controller.Watch ==> Source.Start 也就是 Kind.Start 就是从cache 中获取资源对象的 Informer 并注册事件监听函数。 对 事件监听函数进行了封装，放入到工作队列中的元素不是以前默认的元素唯一的 KEY，而是经过封装的 reconcile.Request 对象，当然通过这个对象也可以很方便获取对象的唯一标识 KEY。
+
+### start触发队列消费
+
+start 由manager.Start 触发，消费workqueue，和 一般控制器中启动控制循环比较类似。Start方法有两个主要功能，一是调用所有startWatches中Source的start方法，注册EventHandler。二是启动Work来处理资源对象，processNextWorkItem从Queue中获取资源对象，reconcileHandler 函数就是我们真正执行元素业务处理的地方，函数中包含了事件处理以及错误处理，真正的事件处理是通过c.Do.Reconcile(req) 暴露给开发者的，所以对于开发者来说，只需要在 Reconcile 函数中去处理业务逻辑就可以了。
+
+```go
+// sigs.k8s.io/controller-runtime/pkg/internal/controller/controller.go
+func (c *Controller) Start(stop <-chan struct{}) error {
+	err := func() error {
+        ...
+		// Launch workers to process resources
+		for i := 0; i < c.MaxConcurrentReconciles; i++ {
+			// Process work items
+			go wait.Until(c.worker, c.JitterPeriod, stop)
+		}
+		return nil
+	}()
+	return nil
+}
+func (c *Controller) worker() {
+	for c.processNextWorkItem() {
+	}
+}
+// 从队列中取出 变更的对象（也就是需要处理的对象），包括队列操作相关的线速、重试等，并触发Reconcile 逻辑
+func (c *Controller) processNextWorkItem() bool {
+	obj, shutdown := c.Queue.Get()
+	if shutdown {
+		return false// Stop working
+	}
+	defer c.Queue.Done(obj)
+	return c.reconcileHandler(obj)
+}
+func (c *Controller) reconcileHandler(obj interface{}) bool {
+	if req, ok = obj.(reconcile.Request); !ok {...}
+	// RunInformersAndControllers the syncHandler, passing it the namespace/Name string of the resource to be synced.
+	if result, err := c.Do.Reconcile(req); err != nil {
+		c.Queue.AddRateLimited(req)
+		return false
+	} else if result.RequeueAfter > 0 {
+		c.Queue.Forget(obj)
+		c.Queue.AddAfter(req, result.RequeueAfter)
+		return true
+	} else if result.Requeue {
+		c.Queue.AddRateLimited(req)
+		return true
+	}
+	c.Queue.Forget(obj)
+	return true
+}
+```
