@@ -1,13 +1,14 @@
 ---
-title: informer源码分析- work queue
-summary: 
+title: k8s源码阅读-informer的workqueue
+summary: workqueue原理
 tags:
   - kubernetes
 date: 2025-06-01
 toc: true
 # external_link: http://github.com
+
 ---
-<!-- {{< toc mobile_only=false is_open=true >}} -->
+
 # 背景
 
 实现自定义controller时，会创建workqueue队列来处理eventhandler添加进来的对象，试着通过阅读源码的方式来看看这个队列和普通队列有什么不同，是怎么进行限速的。通过Queue->DelayingQueue->RateLimiterQueue递进的顺序来进行分析

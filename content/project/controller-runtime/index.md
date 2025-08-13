@@ -1,6 +1,6 @@
 ---
 title: k8s源码分析- controller-runtime
-summary: 
+summary: controller-runtime
 tags:
   - kubernetes
 date: 2025-06-01
@@ -450,3 +450,4 @@ func (c *Controller) reconcileHandler(obj interface{}) bool {
 	return true
 }
 ```
+
